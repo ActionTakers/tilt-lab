@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>S1 tilt lab</title>
+<!-- S1 tilt lab: a phone test of tilt steering. v0.3, 2026-11-06. Logic in lab.mjs. -->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 15px/1.35 system-ui, -apple-system, sans-serif; background: #0b1a26; color: #e8f0f5;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  main { max-width: 980px; margin: 0 auto; padding: 0 14px 40px; }
+  h1 { font-size: 18px; margin: 6px 0; }
+  section { border-top: 1px solid #23394a; padding: 8px 0; }
+  button { font: inherit; min-height: 44px; min-width: 44px; padding: 8px 14px; margin: 4px 6px 4px 0; border-radius: 10px;
+    border: 1px solid #3c6a8a; background: #15364d; color: #fff; touch-action: manipulation; }
+  button.big { font-size: 18px; padding: 12px 22px; background: #1d6fa5; }
+  button.on { background: #2e7d32; border-color: #66bb6a; }
+  button:disabled { opacity: .45; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .bar { position: relative; height: 18px; background: #12283a; border-radius: 4px; flex: 1 1 200px; min-width: 160px; overflow: hidden; }
+  .bar::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #5d7f96; }
+  .bar i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: #4fc3f7; }
+  .lbl { width: 190px; font-size: 13px; }
+  .num { width: 150px; font: 13px ui-monospace, Menlo, monospace; text-align: right; }
+  #top { position: sticky; top: 0; z-index: 5; background: rgba(11, 26, 38, 0.96); padding: 4px 0; border-bottom: 1px solid #23394a; }
+  #msg { min-height: 1.35em; color: #ffd27a; }
+  #warn { display: none; background: #b71c1c; color: #fff; padding: 8px 10px; border-radius: 8px; margin: 4px 0; font-size: 16px; }
+  label { font-size: 14px; margin-right: 6px; }
+  input, select { font-size: 16px; background: #10283a; color: #fff; border: 1px solid #3c6a8a; border-radius: 6px; padding: 6px 8px; }
+  input[type=text] { width: 140px; } input[type=number] { width: 80px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #081420; border: 1px solid #23394a; padding: 8px; font: 12px/1.35 ui-monospace, Menlo, monospace; }
+  #ov { position: fixed; inset: 0; background: #000; display: none; touch-action: none; z-index: 100; }
+  #ov.on { display: block; }
+  #cv { width: 100%; height: 100%; display: block; }
+  #ovtxt { position: absolute; left: 0; right: 0; top: 28%; text-align: center; font-size: 22px; text-shadow: 0 2px 4px #000; pointer-events: none; white-space: pre-line; }
+  #ovbtn { position: absolute; right: calc(10px + env(safe-area-inset-right)); top: calc(10px + env(safe-area-inset-top)); }
+  .small { font-size: 13px; color: #9fb6c6; }
+</style>
+</head>
+<body>
+<main>
+  <h1>S1 tilt lab <span class="small" id="ver"></span></h1>
+  <div id="top">
+    <div id="msg"></div>
+    <div id="warn">The screen did not turn to landscape. Turn off Portrait Orientation Lock (Control Center), then hold the phone sideways again.</div>
+  </div>
+  <div id="status" class="small"></div>
+  <section>
+    <div>Phone test S1: how tilt steering behaves on this phone. About 10 minutes. Nothing leaves the phone unless you copy or download it.</div>
+    <div class="small">Before you start: turn off Portrait Orientation Lock (Control Center), set Auto-Lock to 30 seconds (Settings, Display &amp; Brightness, Auto-Lock), and hold the phone in landscape like a steering wheel.</div>
+  </section>
+  <section>
+    <div class="row"><button id="start" class="big">1. Start</button><span class="small">Asks for motion access, unlocks sound, keeps the screen on.</span></div>
+    <div class="row"><span class="small">Did a question about motion access appear?</span><button data-a="prompt" data-v="yes">Yes</button><button data-a="prompt" data-v="no">No</button></div>
+  </section>
+  <section>
+    <div class="row"><button id="cal">2. Calibrate</button><span class="small">Hold still as you will play, then turn the phone like a wheel when asked.</span></div>
+    <div id="live"></div>
+    <div id="flags" class="small"></div>
+  </section>
+  <section>
+    <div class="row"><button id="rest">3. Rest test (8 s)</button><span class="small">Prop the phone up in landscape, or hold it as still as you can.</span></div>
+  </section>
+  <section>
+    <div>4. Slalom: one run per steering signal, in any order. Steer the boat through every gate.</div>
+    <div class="row" id="runbtns"></div>
+    <div id="runs" class="small"></div>
+  </section>
+  <section>
+    <div>5. Sound, vibration, screen</div>
+    <div class="small">Silent mode: the switch on the side of the phone, or on newer iPhones the Action button or Control Center.</div>
+    <div class="row">Silent mode OFF: <button id="t1">Play tone</button><button data-a="offHeard" data-v="yes">Heard</button><button data-a="offHeard" data-v="no">Not heard</button></div>
+    <div class="row">Silent mode ON: <button id="t2">Play tone</button><button data-a="onHeard" data-v="yes">Heard</button><button data-a="onHeard" data-v="no">Not heard</button></div>
+    <div class="row">Silent mode ON, "play anyway": <button id="t3">Play tone</button><button data-a="onPlayback" data-v="yes">Heard</button><button data-a="onPlayback" data-v="no">Not heard</button></div>
+    <div class="row"><button id="vib">Vibrate</button><button data-a="vibFelt" data-v="yes">Felt</button><button data-a="vibFelt" data-v="no">Not felt</button></div>
+    <div class="row"><span class="small">Your Auto-Lock setting:</span><button data-a="autoLock" data-v="30 s">30 s</button><button data-a="autoLock" data-v="1 min">1 min</button><button data-a="autoLock" data-v="longer or never">Longer or never</button></div>
+    <div class="row"><button id="idle">Idle check (60 s)</button><span class="small">Do not touch the screen. Did it dim?</span><button data-a="dimmed" data-v="yes">Dimmed</button><button data-a="dimmed" data-v="no">Stayed bright</button></div>
+    <div id="answers" class="small"></div>
+  </section>
+  <section>
+    <div>6. Conditions and your verdict</div>
+    <div class="row">
+      <label>Phone model and year <input type="text" data-c="model" autocomplete="off"></label>
+      <label>iOS version <input type="text" data-c="os" placeholder="General > About" style="width:180px" autocomplete="off"></label>
+      <label>Battery % <input type="text" data-c="battery" inputmode="numeric" autocomplete="off"></label>
+      <label>Room C <input type="text" data-c="room" inputmode="numeric" autocomplete="off"></label>
+    </div>
+    <div class="row"><span class="small">Charging:</span><button data-a="charging" data-v="yes">Yes</button><button data-a="charging" data-v="no">No</button>
+      <span class="small">Low Power Mode:</span><button data-a="lpm" data-v="on">On</button><button data-a="lpm" data-v="off">Off</button></div>
+    <div class="row"><span class="small">Brightness:</span><button data-a="brightness" data-v="max">Max</button><button data-a="brightness" data-v="about 3/4">3/4</button><button data-a="brightness" data-v="about 1/2">1/2</button><button data-a="brightness" data-v="about 1/4">1/4</button>
+      <span class="small">Auto-Brightness:</span><button data-a="autoBrightness" data-v="on">On</button><button data-a="autoBrightness" data-v="off">Off</button></div>
+    <div class="row"><span class="small">Best signal:</span><button data-a="best" data-v="A">A</button><button data-a="best" data-v="B">B</button><button data-a="best" data-v="C">C</button><button data-a="best" data-v="D">D</button><button data-a="best" data-v="E">E</button></div>
+    <div class="row"><span class="small">Worst signal:</span><button data-a="worst" data-v="A">A</button><button data-a="worst" data-v="B">B</button><button data-a="worst" data-v="C">C</button><button data-a="worst" data-v="D">D</button><button data-a="worst" data-v="E">E</button></div>
+    <div class="row">
+      <label>Comfort 0-10 <input type="text" data-c="comfort" inputmode="numeric" autocomplete="off"></label>
+      <label>Fun 0-10 <input type="text" data-c="fun" inputmode="numeric" autocomplete="off"></label>
+      <label>Notes <input type="text" data-c="notes" style="width:280px" autocomplete="off"></label>
+    </div>
+  </section>
+  <section>
+    <div class="row"><button id="recap">7. Show recap card</button><button id="copy">Copy</button><button id="dl">Download recording</button></div>
+    <div class="small">Copy is easiest: paste the card to Claude. A screenshot may need two.</div>
+    <pre id="card">Run the steps, then press 7.</pre>
+  </section>
+  <section>
+    <details id="rawbox"><summary class="small">Raw sensor values (only if asked)</summary><pre id="raw">-</pre></details>
+    <details><summary class="small">Settings (only if asked)</summary>
+      <div class="row">
+        <label>Dead zone deg <input type="number" step="0.5" data-s="deadDeg"></label>
+        <label>Full lock deg <input type="number" step="1" data-s="maxDeg"></label>
+        <label>Curve <input type="number" step="0.1" data-s="expo"></label>
+        <label>Filter <select data-s="filter"></select></label>
+        <label>Turn rate deg/s <input type="number" step="5" data-s="yawRateDeg"></label>
+        <label>Speed m/s <input type="number" step="1" data-s="speed"></label>
+      </div>
+    </details>
+    <div class="row"><button id="reset">Start over (clears saved results)</button></div>
+  </section>
+</main>
+<div id="ov"><canvas id="cv"></canvas><div id="ovtxt"></div><button id="ovbtn">Stop</button></div>
+<script type="module" src="./lab.mjs"></script>
+</body>
+</html>
