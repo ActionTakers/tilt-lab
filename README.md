@@ -5,8 +5,10 @@ Static test pages for a phone game, opened on a phone (motion sensors need https
   sensor rates, noise, lag, and screen and sound checks.
 - https://actiontakers.github.io/tilt-lab/s2-water/ : water. Eight steps of water, from flat to everything on, each measured for how
   much drawing the phone has left at its refresh rate.
+- https://actiontakers.github.io/tilt-lab/s3-feel/ : boat feel. A greybox boat on the same waves, steered by tilting the phone: two
+  boats, three cameras, a rival, a buoy course; each lap scored, and its steering recorded so it can be played back.
 
 Nothing leaves the phone unless you copy or download the results yourself.
 
 This repository only publishes the pages. vendor/three-0.186.1 is three.js (MIT licence, see its LICENSE file), unchanged.
-S1 published 2026-11-06; S2 added 2026-11-08.
+S1 published 2026-11-06; S2 and S3 added 2026-11-08.

@@ -1,5 +1,5 @@
 // waves.mjs: ONE Gerstner wave set for the water shader (S2) and the boat's buoyancy (S3), so the boat rides the waves you see.
-// Written 2026-11-08 by session 8af451c7 (g-50 / g-de). Tests: `node --test tests/` (tests/waves.test.mjs); the smoke test
+// Written 2026-11-08. Tests: `node --test tests/` (tests/waves.test.mjs); the smoke test
 // (tools/smoke-s2.mjs) also renders WAVE_GLSL on the GPU and compares it with displace() below.
 // Pure module: no DOM, no three.js. World frame: y up, the sea at y = 0, x and z horizontal. Metres, seconds, radians.
 //
