@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>S2 water lab</title>
+<!-- Phone test S2: how much water this phone can draw at its refresh rate. Written 2026-11-08. No build step; three.js 0.186.1 is a
+     local copy in ../vendor (see vendor/three-0.186.1/SOURCE.txt). -->
+<script type="importmap">
+{ "imports": { "three": "../vendor/three-0.186.1/build/three.module.js", "three/addons/": "../vendor/three-0.186.1/examples/jsm/" } }
+</script>
+<style>
+  :root { color-scheme: dark; --bg: rgba(10, 16, 24, 0.86); --fg: #e8eef5; --dim: #9fb0c2; --acc: #49b6ff; --warn: #ff6b5b; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--fg); font: 16px/1.4 -apple-system, system-ui, Segoe UI, sans-serif; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #panel { position: fixed; top: 0; left: 0; bottom: 0; width: min(400px, 92vw); overflow-y: auto; background: var(--bg); padding: 12px 14px 40px;
+    padding-left: max(14px, env(safe-area-inset-left)); box-sizing: border-box; z-index: 20; -webkit-overflow-scrolling: touch; }
+  #panel.hidden { display: none; }
+  #show { position: fixed; top: 10px; left: max(10px, env(safe-area-inset-left)); z-index: 19; display: none; }
+  #stop { position: fixed; top: 10px; right: max(10px, env(safe-area-inset-right)); z-index: 40; display: none; background: var(--warn); color: #fff; }
+  #hud { position: fixed; left: max(8px, env(safe-area-inset-left)); bottom: 6px; z-index: 18; font: 12px/1.3 ui-monospace, Menlo, monospace; color: #fff;
+    text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
+  #warn { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 50; background: var(--warn); color: #fff; padding: 8px 12px; font-weight: 600; }
+  h1 { font-size: 19px; margin: 4px 0 6px; } h2 { font-size: 16px; margin: 16px 0 4px; color: var(--acc); }
+  p, li { margin: 4px 0; color: var(--fg); } .dim { color: var(--dim); font-size: 14px; }
+  button { font: inherit; font-size: 16px; padding: 8px 12px; margin: 3px 4px 3px 0; border-radius: 8px; border: 1px solid #3a4a5c; background: #1d2a38; color: var(--fg); }
+  button[aria-pressed=true] { background: var(--acc); color: #001; border-color: var(--acc); }
+  button.big { background: var(--acc); color: #001; font-weight: 600; }
+  button:disabled { opacity: 0.45; }
+  input[type=text], input[type=number], textarea { font-size: 16px; padding: 6px 8px; border-radius: 6px; border: 1px solid #3a4a5c; background: #0d1620; color: var(--fg); width: 100%; box-sizing: border-box; }
+  .row { margin: 6px 0; } .row label { display: block; font-size: 14px; color: var(--dim); }
+  #msg { margin: 8px 0; padding: 8px; background: #13202d; border-radius: 6px; min-height: 1.4em; }
+  #card { white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, monospace; background: #0b121a; padding: 8px; border-radius: 6px; user-select: text; -webkit-user-select: text; }
+  details summary { cursor: pointer; color: var(--dim); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="warn"></div>
+<button id="show">Panel</button>
+<button id="stop">Stop</button>
+<div id="hud"></div>
+<div id="panel">
+  <h1>Phone test S2: water</h1>
+  <p class="dim">How much water this phone can draw while keeping its frame rate. Eight steps of water, from flat to everything on,
+    each measured with extra load until frames drop. About 8 minutes, plus an optional 10-minute heat run. Nothing leaves the phone
+    unless you copy the card yourself.</p>
+  <div id="msg">Turn the phone sideways (landscape), then press 1. Start.</div>
+
+  <h2>0. Before you start</h2>
+  <ul class="dim">
+    <li>Landscape. Portrait Orientation Lock off (Control Centre).</li>
+    <li>Brightness as you would play; Low Power Mode off for now.</li>
+    <li>Close other apps. Note the battery % below.</li>
+  </ul>
+  <div class="row"><label for="model">Phone model (Settings, General, About)</label><input id="model" type="text" data-t="model" autocomplete="off"></div>
+  <div class="row"><label for="batt0">Battery % now</label><input id="batt0" type="number" inputmode="numeric" data-t="batteryStart"></div>
+  <div class="row"><label for="room">Room temperature, C (a guess is fine)</label><input id="room" type="number" inputmode="decimal" data-t="room"></div>
+  <div class="row"><label>Charging</label><span data-group="charging"><button data-a="charging" data-v="no">no</button><button data-a="charging" data-v="yes">yes</button></span></div>
+  <div class="row"><label>Low Power Mode</label><span><button data-a="lpm" data-v="off">off</button><button data-a="lpm" data-v="on">on</button></span></div>
+  <div class="row"><label>Brightness</label><span><button data-a="brightness" data-v="low">low</button><button data-a="brightness" data-v="mid">mid</button><button data-a="brightness" data-v="high">high</button></span></div>
+
+  <h2>1. Start</h2>
+  <button id="start" class="big">1. Start</button>
+  <p class="dim">Keeps the screen awake and measures the refresh rate for 2 s (the screen stays dark then).</p>
+
+  <h2>2. Look</h2>
+  <p class="dim">Tap through the steps and watch the water. Which is the cheapest step that still looks like water?</p>
+  <div id="rungs"></div>
+  <div><button data-scale="1" aria-pressed="true">full resolution</button><button data-scale="0.5">half resolution</button></div>
+  <button id="hide">Hide this panel</button>
+
+  <h2>3. Ladder (about 6 min)</h2>
+  <p class="dim">Prop the phone up in landscape and do not touch it. Each step plays for a few seconds with more and more hidden
+    extra drawing until frames drop. Stop is top right.</p>
+  <button id="ladder" class="big">3. Run the ladder</button>
+
+  <h2>4. Path (2 min)</h2>
+  <p class="dim">The 60-second boat path with everything on, at full and at half resolution. Watch for stutter.</p>
+  <button id="path" class="big">4. Run the path</button>
+
+  <h2>5. Heat run (10 min, optional)</h2>
+  <p class="dim">Best after the phone lay idle and unplugged for 10 minutes. Everything on, full resolution. Note the battery % before
+    and after. Feel the back of the phone at the end.</p>
+  <button id="heat">5. Run the heat test</button>
+
+  <h2>6. Your answers</h2>
+  <div class="row"><label>Cheapest step that still looks like water</label><span id="ans-cheap"></span></div>
+  <div class="row"><label>Best-looking step</label><span id="ans-best"></span></div>
+  <div class="row"><label>Stutter you saw in the path run</label><span><button data-a="stutter" data-v="none">none</button><button data-a="stutter" data-v="some">some</button><button data-a="stutter" data-v="lots">lots</button></span></div>
+  <div class="row"><label>Phone after the heat run</label><span><button data-a="warm" data-v="cool">cool</button><button data-a="warm" data-v="warm">warm</button><button data-a="warm" data-v="hot">hot</button><button data-a="warm" data-v="not run">not run</button></span></div>
+  <div class="row"><label for="batt1">Battery % at the end</label><input id="batt1" type="number" inputmode="numeric" data-t="batteryEnd"></div>
+  <div class="row"><label for="notes">Notes (what looked wrong or great)</label><textarea id="notes" rows="2" data-t="notes"></textarea></div>
+
+  <h2>7. Card</h2>
+  <button id="copy" class="big">Copy the card</button><button id="dl">Download the details</button>
+  <div id="card">No results yet.</div>
+
+  <details><summary>Settings</summary>
+    <div class="row"><label for="seg">Water grid (segments per side)</label><input id="seg" type="number" data-s="seg"></div>
+    <div class="row"><label for="wc">Number of waves (1-8)</label><input id="wc" type="number" data-s="waveCount"></div>
+    <div class="row"><label for="rs">Reflection size (px)</label><input id="rs" type="number" data-s="reflSize"></div>
+    <button id="reset">Start over (clears saved results)</button>
+  </details>
+  <p class="dim" id="ver"></p>
+</div>
+<script type="module" src="./water-lab.mjs"></script>
+</body>
+</html>

@@ -8,9 +8,10 @@
 // - DeviceMotion.accelerationIncludingGravity: by the spec a phone lying flat, screen up, reads z = +9.81 (the reaction to gravity,
 //   pointing up). Some platforms are reported to invert it; S1 measures that (gravityConvention below). A WHEEL angle is the same
 //   under either sign, a LEAN angle flips.
-// - DeviceMotion.rotationRate: the W3C text names alpha for the rate around z (beta x, gamma y), right-hand rule, deg/s. Chrome 156
-//   delivers the z rate in gamma (measured 2026-11-06) and WebKit is reported to do the same, so nothing here assumes a component:
-//   S1 measures which one carries the turn, its sign and its unit (gyroMappingBest below).
+// - DeviceMotion.rotationRate: the current W3C editor draft returns the x axis rate as alpha, y as beta, z as gamma (fetched
+//   2026-11-08, lines 1622-1624; an older wording named alpha for z). Chrome 156 (2026-11-06) and Safari 26.6.1 on his iPhone
+//   (2026-11-08) both deliver the z rate in gamma, deg/s. Nothing here assumes a component: S1 measures which one carries the turn,
+//   its sign and its unit (gyroMappingBest below).
 // - Wheel steering: the phone turns like a steering wheel about the screen normal. Turning it clockwise as the player sees it is
 //   a negative rotation about +z; a world-fixed vector seen from the device then turns by the opposite angle (positive).
 
@@ -215,7 +216,8 @@ export function slopeThroughOrigin(xs, ys) {
   for (let i = 0; i < xs.length; i++) { sse += (ys[i] - k * xs[i]) ** 2; sst += (ys[i] - my) ** 2; }
   return { k, r2: sst > 0 ? 1 - sse / sst : NaN, n: xs.length };
 }
-// Gyro mapping from paired samples: x = -rotationRate.alpha * dt (what the spec predicts as the steer-right change in deg),
+// Gyro mapping from paired samples: x = -(one rotationRate component) * dt (the steer-right change in deg if that component is the
+// z rate in deg/s; the spec's z rate is gamma, see the header),
 // y = the measured change of the gravity wheel angle. k near +1: spec deg/s; near -1: inverted; near 57.3 or 1/57.3: rad/deg mixup.
 export function gyroMapping(xs, ys, { minN = 60, minR2 = 0.8 } = {}) {
   const fit = slopeThroughOrigin(xs, ys);
