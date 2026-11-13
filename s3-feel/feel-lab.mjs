@@ -1,15 +1,17 @@
 // feel-lab.mjs: the S3 boat feel lab. A greybox boat on the S2 waves, steered by tilt (signal B by default), on a buoy course with
 // one rival; two handling presets (offshore, jet), three chase cameras, a tuning panel, scores per run, a recap card, and a recording
 // of every run's steering that replays exactly on the same browser.
-// Written 2026-11-08. Smoke test: node tools/smoke-s3.mjs (headless Chrome; never phone numbers).
+// Written 2026-11-08; v0.2 2026-11-13: a moored yacht beside the course (assets/yacht-b04.glb) and the sound-output question.
+// Smoke test: node tools/smoke-s3.mjs (headless Chrome; never phone numbers).
 // Simulation: ../shared/boat-sim.mjs; steering: ../shared/tilt-input.mjs; water: ../shared/water-view.mjs; waves: ../shared/waves.mjs.
 import * as THREE from 'three';
 import * as W from '../shared/waves.mjs';
 import * as B from '../shared/boat-sim.mjs';
 import { TiltInput, TILT_DEFAULTS } from '../shared/tilt-input.mjs';
 import { Sea, Wake, Spray } from '../shared/water-view.mjs';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-export const VERSION = 's3-feel v0.1';
+export const VERSION = 's3-feel v0.2';
 const now = () => performance.now();
 const fin = (v) => typeof v === 'number' && Number.isFinite(v);
 const rd = (v, d = 2) => (fin(v) ? Math.round(v * 10 ** d) / 10 ** d : null);
@@ -125,6 +127,41 @@ const rampMeshes = course.ramps.map((r) => {
   const p = B.pointAt(course, r.s, 0); m.position.set(p.x, 0, p.z); m.rotation.y = -p.h; scene.add(m); return { m, r, p };
 });
 
+// ---------- a moored yacht beside the course: a 3D model made from a turnaround picture, slimmed to 11,998 triangles ----------
+// It loads in the background (1.7 MB); a run never waits for it, and a failed load only shows on the card.
+const YACHT = { url: './assets/yacht-b04.glb', length: 24, waterline: 1.45, s: 120, off: 58, turn: 0.35 };
+const yacht = { state: 'loading', ms: null, bytes: null, tris: null, err: null, obj: null, seen: 0, y: 0, pitch: 0, roll: 0 };
+const yachtAt = (() => {   // the outside of the loop at s = 120 m, 58 m from the line (the course is 28 m wide each side)
+  let cx = 0, cz = 0, n = 0; for (let s = 0; s < course.len; s += 20) { const p = B.pointAt(course, s, 0); cx += p.x; cz += p.z; n++; }
+  const a = B.pointAt(course, YACHT.s, YACHT.off), b = B.pointAt(course, YACHT.s, -YACHT.off);
+  const p = Math.hypot(a.x - cx / n, a.z - cz / n) > Math.hypot(b.x - cx / n, b.z - cz / n) ? a : b;
+  return { x: p.x, z: p.z, h: p.h + YACHT.turn };
+})();
+{
+  const t0 = now();
+  new GLTFLoader().load(YACHT.url, (g) => {
+    const inner = g.scene; inner.rotation.y = -Math.PI / 2;   // the model's bow points +x; the game's boats point +z
+    inner.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(inner), size = box.getSize(new THREE.Vector3()), k = YACHT.length / Math.max(size.x, size.z);
+    inner.scale.setScalar(k); inner.position.y = -box.min.y * k - YACHT.waterline;   // the keel sits 1.45 m under the water
+    const outer = new THREE.Group(); outer.add(inner); outer.position.set(yachtAt.x, 0, yachtAt.z); outer.rotation.set(0, -yachtAt.h, 0, 'YXZ');
+    let tris = 0; inner.traverse((o) => { if (o.isMesh) { const gm = o.geometry; tris += (gm.index ? gm.index.count : gm.attributes.position.count) / 3; } });
+    let bytes = null; try { const pe = performance.getEntriesByName(new URL(YACHT.url, location.href).href)[0]; bytes = pe ? (pe.decodedBodySize || pe.encodedBodySize || null) : null; } catch (e) { /* no timing */ }
+    scene.add(outer); Object.assign(yacht, { state: 'loaded', ms: Math.round(now() - t0), tris, obj: outer, bytes: bytes || yacht.bytes });
+  }, (e) => { if (e && e.total) yacht.bytes = e.total; }, (e) => { yacht.state = 'failed'; yacht.err = String((e && e.message) || e).slice(0, 120); });
+}
+const camDir = new THREE.Vector3();
+function placeYacht(wv, t, dt) {   // slow heave, pitch and roll on the same waves (a 24 m hull answers slowly), and whether it was in view
+  const o = yacht.obj; if (!o) return;
+  const f = fadeAt(o.position.x, o.position.z), fx = -Math.sin(yachtAt.h), fz = Math.cos(yachtAt.h), rx = -Math.cos(yachtAt.h), rz = -Math.sin(yachtAt.h);
+  const h = (dx, dz) => (f > 0.01 ? W.heightAt(wv, o.position.x + dx, o.position.z + dz, t, 3) * f : 0);
+  const hb = h(fx * 10, fz * 10), hs = h(-fx * 10, -fz * 10), hp = h(-rx * 3, -rz * 3), hr = h(rx * 3, rz * 3), k = 1 - Math.exp(-dt / 0.8);
+  yacht.y += ((hb + hs + hp + hr) / 4 - yacht.y) * k; yacht.pitch += (Math.atan2(hb - hs, 20) - yacht.pitch) * k; yacht.roll += (Math.atan2(hp - hr, 6) - yacht.roll) * k;
+  o.position.y = yacht.y; o.rotation.set(-yacht.pitch, -yachtAt.h, yacht.roll, 'YXZ');
+  camera.getWorldDirection(camDir); v3.set(o.position.x - camera.position.x, o.position.y + 3 - camera.position.y, o.position.z - camera.position.z);
+  if (S.active && v3.dot(camDir) > 0) { v3.set(o.position.x, o.position.y + 3, o.position.z).project(camera); if (Math.abs(v3.x) < 1 && Math.abs(v3.y) < 1) yacht.seen++; }   // run frames only
+}
+
 // ---------- runs ----------
 function simSettings(preset, rival) {
   const s = B.defaultSettings(preset);
@@ -163,12 +200,14 @@ function frameSummary(f) {
 function finishRun(why) {
   const A = S.active; if (!A) return;
   if (!A.run.done) A.run.finish(why);
-  const sm = A.run.summary(), durS = Math.max(0.001, (now() - A.th0) / 1000);
+  if (A.hiddenAt !== null && A.hiddenAt !== undefined) { A.hiddenMs = (A.hiddenMs || 0) + (now() - A.hiddenAt); A.hiddenAt = null; }
+  const sm = A.run.summary(), durS = Math.max(0.001, (now() - A.th0 - (A.hiddenMs || 0)) / 1000);   // sensor rates over visible time only
   const entry = { n: (A.kind === 'replay' ? S.replays : S.runs).length + 1, kind: A.kind, idx: A.idx, at: A.startedAt, preset: A.run.settings.preset, cam: A.cam,
     rival: A.run.settings.rival, sea: S.settings.sea, quality: S.settings.quality, scale: S.settings.scale, render: renderSize(), settings: A.run.settings,
     tilt: { ...input.o }, signal: A.signal, source: A.source, summary: sm, why: sm.why, frames: frameSummary(A.frames),
     sensor: { motPerS: rd((input.counts.mot - A.counts0.mot) / durS, 1), oriPerS: rd((input.counts.ori - A.counts0.ori) / durS, 1) },
-    recentres: A.recentres, inputs: B.encodeInputs(A.run.in.steer, A.run.in.brake), scores: {}, replayOf: A.replayOf, timeScale: S.timeScale, auto: S.auto };
+    recentres: A.recentres, inputs: B.encodeInputs(A.run.in.steer, A.run.in.brake), scores: {}, replayOf: A.replayOf, timeScale: S.timeScale, auto: S.auto,
+    hidden: { times: A.hides || 0, s: rd((A.hiddenMs || 0) / 1000, 1) } };
   if (A.kind === 'replay') {
     const src = A.replaySource;
     if (src) entry.check = { lapS: [src.lapS, sm.lapS], sameEnd: JSON.stringify(src.end) === JSON.stringify(sm.end), dEndM: rd(Math.hypot(src.end.x - sm.end.x, src.end.z - sm.end.z), 4) };
@@ -269,6 +308,7 @@ function placeScene(run, dt, camKey) {
   arch.position.set(ap.x, W.heightAt(wv, ap.x, ap.z, t, 2) * fadeAt(ap.x, ap.z), ap.z); arch.scale.set(w, w * 0.45, 1); arch.rotation.set(0, -ap.h, 0);
   arch.material.opacity = 0.55 + 0.35 * Math.sin(t * 6);
   rampMeshes.forEach((rm) => { if (rm.m.visible) rm.m.position.y = W.heightAt(wv, rm.p.x, rm.p.z, t, 2) * fadeAt(rm.p.x, rm.p.z) - 0.05; });
+  placeYacht(wv, t, dt);
 }
 function draw() { sea.renderReflection(camera, look); renderer.setClearColor(0x000000, 1); renderer.render(scene, camera); }
 
@@ -281,7 +321,8 @@ function loop(ts) {
   if (S.calibrating) calibStep(th);
   const A = S.active;
   if (A) {
-    if (d !== null && d > 0) { const f = A.frames, missed = Math.max(0, Math.round(d / S.interval) - 1); f.n++; f.missed += missed; f.deltas.push(d); }
+    if (A.skipFrame) A.skipFrame = false;   // the first frame back from a hidden page: its gap is the pause, not a drop
+    else if (d !== null && d > 0) { const f = A.frames, missed = Math.max(0, Math.round(d / S.interval) - 1); f.n++; f.missed += missed; f.deltas.push(d); }
     A.acc += dt * S.timeScale;
     const run = A.run;
     while (A.acc >= B.DT && !run.done) {
@@ -412,7 +453,16 @@ async function requestWake() {
   try { S.wake.sentinel = await navigator.wakeLock.request('screen'); S.wake.state = 'active'; S.wake.sentinel.addEventListener('release', () => { S.wake.releases++; S.wake.sentinel = null; S.wake.state = 'released'; }); }
   catch (e) { S.wake.state = 'refused: ' + (e && e.name); }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.started) requestWake(); });
+// v0.2: leaving the page during a run (a notification, the app switcher) pauses the run (no frames come while hidden and dt is capped),
+// is counted on the card, and does not count as dropped frames or sensor gaps; the engine sound is resumed on the way back.
+document.addEventListener('visibilitychange', () => {
+  const A = S.active, vis = document.visibilityState === 'visible';
+  if (!vis) { if (A) { A.hides = (A.hides || 0) + 1; A.hiddenAt = now(); } return; }
+  if (A && A.hiddenAt !== null && A.hiddenAt !== undefined) { A.hiddenMs = (A.hiddenMs || 0) + (now() - A.hiddenAt); A.hiddenAt = null; A.skipFrame = true; }
+  if (S.started) requestWake();
+  const ctx = S.audio.ctx;
+  if (ctx && ctx.state !== 'running') { S.audio.resumes = (S.audio.resumes || 0) + 1; try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not resumable */ } }
+});
 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); S.lost.push({ at: new Date().toISOString(), during: S.active ? S.active.kind : 'idle' }); if (S.active) finishRun('lost graphics'); msg('The phone took the graphics away (context lost). It is on the card. Reload the page to go on.'); save(); });
 canvas.addEventListener('webglcontextrestored', () => { S.restoredCtx++; save(); });
 function beat() { try { localStorage.setItem(ACTIVE, JSON.stringify({ kind: S.active.kind, startedAt: S.active.startedAt, t0: Date.now() - (now() - S.active.th0), beat: Date.now() })); } catch (e) { /* storage blocked */ } }
@@ -450,23 +500,24 @@ function runLine(r) {
   return `Run ${r.n} ${runLabel(r)} ${B.PRESETS[r.preset].label} cam ${r.cam} (rival ${r.rival}, ${r.source}${r.signal ? ' ' + r.signal : ''}${r.auto ? ', AUTOPILOT' : ''}${r.timeScale !== 1 ? `, time x${r.timeScale}` : ''}${r.why !== 'finished' ? ', ' + r.why.toUpperCase() : ''}): `
     + `lap ${fmt(s.lapS, 2)} s${s.missed ? ` (+${2 * s.missed} = ${fmt(s.penaltyS, 2)})` : ''}, gates ${s.passed}/${s.gates}, off course ${fmt(s.offCourseS, 1)} s, contacts ${s.contacts}, air ${fmt(s.airS, 1)} s (${s.landings} landings, ${s.cleanLandings} clean), top ${fmt(s.topKmh, 0)}, mean ${fmt(s.meanKmh, 0)} km/h, ${gap}`
     + ` | steer % left..right ${h}, at full lock ${fmt(s.saturationPct, 1)} %, mean ${fmt(s.meanAbsSteer, 2)}, corrections ${s.corrections} (${fmt(s.correctionsPerCorner, 2)} per corner, ${fmt(s.correctionsPerMin, 0)}/min), steer rate rms ${fmt(s.steerRateRms, 2)}/s`
-    + ` | frames drops ${fmt(f.dropsPct, 1)} %, median ${fmt(f.medianMs, 1)} ms, worst ${fmt(f.worstMs, 0)} ms | sensors ${fmt(r.sensor.motPerS, 0)}/${fmt(r.sensor.oriPerS, 0)} per s | recentres ${r.recentres} | fun ${r.scores.fun ?? '?'}, comfort ${r.scores.comfort ?? '?'}`;
+    + ` | frames drops ${fmt(f.dropsPct, 1)} %, median ${fmt(f.medianMs, 1)} ms, worst ${fmt(f.worstMs, 0)} ms | sensors ${fmt(r.sensor.motPerS, 0)}/${fmt(r.sensor.oriPerS, 0)} per s | recentres ${r.recentres}${r.hidden && r.hidden.times ? ` | page hidden ${r.hidden.times}x, ${fmt(r.hidden.s, 1)} s` : ''} | fun ${r.scores.fun ?? '?'}, comfort ${r.scores.comfort ?? '?'}`;
 }
 function cardText() {
   const A = S.answers, T = S.typed, C = S.auto_, L = [], I = input.info(), o = input.o, sets = S.settings;
   L.push(`S3 feel lab ${VERSION} | device clock ${new Date().toISOString()} | ${location.host}${S.restored ? ' | includes results restored after a reload' : ''}`);
   L.push(`Phone: ${T.model || '?'} | OS/browser: ${C.ua || shortUA()} (may be frozen) | GPU: ${C.gpu || '?'} | DPR ${C.dpr ?? window.devicePixelRatio} | screen ${C.screen || '?'} | render ${renderSize()} (${sets.scale === 1 ? 'full' : sets.scale * 100 + ' %'}) | water ${sets.quality}, sea ${sets.sea} | refresh seen ${fmt(1000 / S.interval, 1)} Hz`);
-  L.push(`Battery start ${T.batteryStart || '?'} %, end ${T.batteryEnd || '?'} % | charging ${A.charging || '?'} | Low Power ${A.lpm || '?'} | brightness ${A.brightness || '?'} | silent switch ${A.silent || '?'} | wake lock ${S.wake.state} (released ${S.wake.releases}x) | sound ${sets.sound}, engine ${S.audio.state}, audio session ${S.audio.session}, test tones ${S.audio.tones}`);
+  L.push(`Battery start ${T.batteryStart || '?'} %, end ${T.batteryEnd || '?'} % | charging ${A.charging || '?'} | Low Power ${A.lpm || '?'} | brightness ${A.brightness || '?'} | silent switch ${A.silent || '?'} | wake lock ${S.wake.state} (released ${S.wake.releases}x) | sound ${sets.sound}, engine ${S.audio.state}, audio session ${S.audio.session}, test tones ${S.audio.tones}, sound resumed after a hidden page ${S.audio.resumes || 0}x`);
   const cOk = input.cals.filter((c) => c.ok), cl = cOk[cOk.length - 1];
   L.push(`Steering: ${I.source}, signal ${o.signal} (in use ${I.inUse || '-'}), gyro ${I.gyro} | One Euro min ${o.euroMin} Hz, gain ${o.euroBeta} | dead ${o.deadDeg} deg, full lock ${o.maxDeg} deg, curve ${o.expo}, invert ${o.invert ? 'yes' : 'no'} | calibrations ${cOk.length} ok${cl ? ` (last: moved ${fmt(cl.spread, 2)} deg, tilted back ${fmt(cl.tiltBack, 0)} deg)` : ''}, ${input.cals.length - cOk.length} refused | interval ${I.interval || '?'} | permission ${S.perm ? `${S.perm.motion}/${S.perm.orientation}` : 'not asked'}`);
   const tuned = Object.entries(S.tune).filter(([, v]) => Object.keys(v).length).map(([k, v]) => `${k} ${Object.entries(v).map(([a, b]) => `${a}=${b}`).join(' ')}`).join('; ');
   L.push(`Boats: Offshore top ${B.PRESETS.offshore.top} m/s, turn ${B.PRESETS.offshore.turnRate} deg/s; Jet top ${B.PRESETS.jet.top} m/s, turn ${B.PRESETS.jet.turnRate} deg/s, ramps | rival skill ${sets.skill} | tuning changed: ${tuned || 'none'}`);
+  L.push(`Moored yacht: ${yacht.state}${yacht.state === 'loaded' ? ` in ${yacht.ms} ms${yacht.bytes ? `, ${(yacht.bytes / 1048576).toFixed(2)} MB` : ''}, ${yacht.tris} triangles, in view on ${yacht.seen} frames` : yacht.err ? ` (${yacht.err})` : ''} | looks right: ${A.yachtLook || '?'}`);
   if (!S.runs.length) L.push('Runs: none yet');
   S.runs.forEach((r) => L.push(runLine(r)));
   const done = PROTOCOL.filter((_, i) => S.runs.some((r) => r.kind === 'protocol' && r.idx === i && r.why === 'finished')).length;
   S.replays.forEach((r) => L.push(`Replay ${r.n} of run ${r.replayOf ?? '?'}: ${r.check ? `lap ${fmt(r.check.lapS[0], 3)} -> ${fmt(r.check.lapS[1], 3)} s, end ${r.check.sameEnd ? 'identical' : 'differs by ' + r.check.dEndM + ' m'}` : fmt(r.summary.lapS, 3) + ' s'}`));
   L.push(`Lost graphics context: ${S.lost.length}${S.lost.length ? ' (' + S.lost.map((l) => `${l.during} ${l.at.slice(11, 19)}Z`).join(', ') + ')' : ''} | page restarted during a run: ${S.reloads.length}${S.reloads.length ? ' (' + S.reloads.map((r) => `${r.during} after ${r.ranS} s`).join(', ') + ')' : ''}`);
-  L.push(`Protocol ${done} of 6 | Answers: better boat ${A.bestBoat || '?'}, camera ${A.bestCam || '?'}, steering ${A.steering || '?'}, rival ${A.rival || '?'}, felt sick ${A.sick || '?'}, heard the engine ${A.heard || '?'} | notes: ${T.notes || '-'}`);
+  L.push(`Protocol ${done} of 6 | Answers: better boat ${A.bestBoat || '?'}, camera ${A.bestCam || '?'}, steering ${A.steering || '?'}, rival ${A.rival || '?'}, felt sick ${A.sick || '?'}, heard the engine ${A.heard || '?'} (sound out of ${A.output || '?'}) | notes: ${T.notes || '-'}`);
   return L.join('\n').replace(/[^\x20-\x7e\n]/g, '?');
 }
 function recordingObject(full = false) {
@@ -573,4 +624,7 @@ window.__s3 = { version: VERSION, S, input, course, start, startRun, stopRun, st
   setAuto: (on) => { S.auto = !!on; }, setTimeScale: (x) => { S.timeScale = x; }, setBrake: (on) => { S.brake = !!on; },
   run: () => (S.active ? S.active.run : null), idle: () => idle, camera: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, fov: camera.fov, up: camera.up.toArray() }),
   boatMesh: () => ({ y: boats.player.position.y, rot: boats.player.rotation.toArray().slice(0, 3) }), probe: (pts, t) => sea.probe(pts, t),
-  waves: () => (S.active ? S.active.run.waves : idle.waves), renderSize, calibrate: () => input.calibrate(now()), recentre, testTone };
+  waves: () => (S.active ? S.active.run.waves : idle.waves), renderSize, calibrate: () => input.calibrate(now()), recentre, testTone,
+  yacht: () => ({ state: yacht.state, ms: yacht.ms, bytes: yacht.bytes, tris: yacht.tris, err: yacht.err, seen: yacht.seen, at: yachtAt,
+    y: yacht.obj ? yacht.obj.position.y : null, inScene: !!(yacht.obj && yacht.obj.parent === scene),
+    box: yacht.obj ? (() => { const b = new THREE.Box3().setFromObject(yacht.obj); return { keel: b.min.y - yacht.obj.position.y, top: b.max.y - yacht.obj.position.y, len: Math.max(b.max.x - b.min.x, b.max.z - b.min.z) }; })() : null }) };

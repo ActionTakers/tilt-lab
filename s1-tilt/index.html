@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>S1 tilt lab</title>
-<!-- S1 tilt lab: a phone test of tilt steering. v0.3, 2026-11-06. Logic in lab.mjs. -->
+<!-- S1 tilt lab: a phone test of tilt steering. v0.4, 2026-11-13 (v0.3 2026-11-06). Logic in lab.mjs. -->
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; font: 15px/1.35 system-ui, -apple-system, sans-serif; background: #0b1a26; color: #e8f0f5;
@@ -70,6 +70,8 @@
   <section>
     <div>5. Sound, vibration, screen</div>
     <div class="small">Silent mode: the switch on the side of the phone, or on newer iPhones the Action button or Control Center.</div>
+    <div class="row"><span class="small">First: where does the sound come out? Unplug headphones and switch Bluetooth audio off, so it is the phone speaker.</span>
+      <button data-a="output" data-v="phone speaker">Phone speaker</button><button data-a="output" data-v="wired headphones">Wired headphones</button><button data-a="output" data-v="Bluetooth">Bluetooth</button><button data-a="output" data-v="not sure">Not sure</button></div>
     <div class="row">Silent mode OFF: <button id="t1">Play tone</button><button data-a="offHeard" data-v="yes">Heard</button><button data-a="offHeard" data-v="no">Not heard</button></div>
     <div class="row">Silent mode ON: <button id="t2">Play tone</button><button data-a="onHeard" data-v="yes">Heard</button><button data-a="onHeard" data-v="no">Not heard</button></div>
     <div class="row">Silent mode ON, "play anyway": <button id="t3">Play tone</button><button data-a="onPlayback" data-v="yes">Heard</button><button data-a="onPlayback" data-v="no">Not heard</button></div>

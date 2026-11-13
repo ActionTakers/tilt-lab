@@ -1,10 +1,13 @@
 // lab.mjs: the S1 tilt lab page: how tilt steering behaves on a phone (five steering signals, noise, lag, a buoy slalom, sound and
-// screen checks). ES module, no build step. v0.3, 2026-11-06; its history and reviews are in the project's LOG.md and review folder.
+// screen checks). ES module, no build step. v0.4, 2026-11-13 (v0.3 2026-11-06); its history is in the project's LOG.md.
+// v0.4, after the first iPhone run: the rest test refuses a moving phone, events/s are counted during each run, the frame line
+// gives the mean interval and the share of whole-millisecond time stamps, and the sound section asks where the sound came out.
 // Desktop and headless numbers are smoke tests only, never phone numbers. What each number means: s1-tilt/README.md.
 import * as M from '../shared/tilt-math.mjs';
 import { makeCourse, Slalom } from '../shared/slalom.mjs';
 
-const VERSION = 's1-tilt v0.3';
+const VERSION = 's1-tilt v0.4';
+const REST_DRIFT_MAX = 1.5;   // deg: the same limit as calibration; drift = peak-to-peak of a 250 ms moving mean, so noise alone stays under it
 const CANDS = ['GWH', 'CWH', 'QTW', 'GLN', 'EUL'];
 const LETTER = { GWH: 'A', CWH: 'B', QTW: 'C', GLN: 'D', EUL: 'E' };
 const NAMES = { GWH: 'gravity wheel', CWH: 'gravity + gyro wheel', QTW: 'orientation twist', GLN: 'gravity lean', EUL: 'Euler, naive' };
@@ -14,7 +17,7 @@ const STORE = 's1-tilt-session';
 const ANSWERS = {   // the answer buttons: key -> label on the card
   prompt: 'motion prompt seen', autoLock: 'Auto-Lock', brightness: 'brightness', autoBrightness: 'Auto-Brightness', charging: 'charging',
   lpm: 'Low Power Mode', offHeard: 'tone heard, silent mode off', onHeard: 'tone heard, silent mode on', onPlayback: 'tone heard, silent on + play anyway',
-  vibFelt: 'vibration felt', dimmed: 'screen dimmed in idle check', best: 'best signal', worst: 'worst signal',
+  vibFelt: 'vibration felt', dimmed: 'screen dimmed in idle check', best: 'best signal', worst: 'worst signal', output: 'sound came out of',
 };
 const $ = (id) => document.getElementById(id);
 const now = () => performance.now();
@@ -42,7 +45,7 @@ const S = {
   res: Object.fromEntries(['ax', 'ay', 'az', 'ra', 'rb', 'rg', 'alpha', 'beta', 'gamma'].map((k) => [k, new M.Resolution()])),
   cand: null, flat: false,
   settings: { deadDeg: 2, maxDeg: 25, expo: 1.5, filter: 'ema60', yawRateDeg: 75, speed: 14, gravityTauMs: 60, cwhTauS: 0.25 },
-  rafDeltas: [], frameNo: 0, dpr: 1,
+  rafDeltas: [], frameNo: 0, rafWholeMs: 0, dpr: 1,
   calib: null, run: null, runs: [], restRun: null, rests: [], idle: null, idles: [], vis: [], restored: null,
   audio: { ctx: null, state: 'not started', session: 'audioSession' in navigator ? 'supported' : 'not supported', tones: [] },
   vib: { supported: 'vibrate' in navigator, calls: [] },
@@ -168,7 +171,7 @@ let lastRaf = null;
 function frame(rafTs) {
   const t = now();
   if (lastRaf !== null) { const d = rafTs - lastRaf; if (d > 0 && d < 250) cap(S.rafDeltas, d, 1200); }
-  lastRaf = rafTs; S.frameNo++;
+  lastRaf = rafTs; S.frameNo++; if (Number.isInteger(rafTs)) S.rafWholeMs++;
   const cand = candidates(); if (cand) S.cand = cand;
   if (S.calib) calibStep(t);
   if (S.restRun) restStep(t, cand);
@@ -216,8 +219,17 @@ function restStep(t, cand) {
     accStd: [R.ax, R.ay, R.az].map((a) => rd(M.std(a), 4)), gyroStdRaw: [R.ra, R.rb, R.rg].map((a) => rd(M.std(a), 4)),
     gyroScreenNormalStdDegS: comp ? rd(M.std(comp) * g.scale, 4) : null, gyroBiasRaw: [R.ra, R.rb, R.rg].map((a) => rd(M.mean(a), 4)) };
   for (const k of CANDS) { const a = R.v[k]; res.std[k] = rd(M.std(a), 4); res.p2p[k] = a.length ? rd(Math.max(...a) - Math.min(...a), 3) : null; res.n[k] = a.length; }
+  // stillness: the phone must not drift. Drift = peak-to-peak of a 250 ms moving mean of A (gravity) and C (orientation), so
+  // sensor noise averages out and only a real movement counts. A moving rest test keeps its numbers but is marked void.
+  const nWin = Math.max(1, Math.round(R.durMs > 0 ? 0.25 * R.v.GWH.length / (R.durMs / 1000) : 15));
+  const drift = (a) => { if (a.length < nWin) return null; let s = 0, lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < a.length; i++) { s += a[i]; if (i >= nWin) s -= a[i - nWin]; if (i >= nWin - 1) { const m = s / nWin; lo = Math.min(lo, m); hi = Math.max(hi, m); } }
+    return hi - lo; };
+  const drifts = ['GWH', 'QTW'].map((k) => drift(R.v[k])).filter(fin);
+  res.driftDeg = drifts.length ? rd(Math.max(...drifts), 2) : null; res.still = fin(res.driftDeg) ? res.driftDeg <= REST_DRIFT_MAX : null;
   S.rests.push(res); S.restRun = null; save();
-  msg('Rest test done (the numbers are on the card, step 7). Next: 4. Slalom.');
+  if (res.still === false) msg(`You moved during the rest test (drift ${res.driftDeg.toFixed(1)} deg), so its noise numbers do not count. Prop the phone up against a mug or a book and press 3. Rest test again.`);
+  else msg('Rest test done (the numbers are on the card, step 7). Next: 4. Slalom.');
 }
 
 // ---------- slalom runs ----------
@@ -241,7 +253,7 @@ function runStep(t, rafTs, cand) {
       // the neutral pose must be taken while the phone is still: up to 3 tries; a shaky last try starts anyway and says so
       if (c.spread > 1.5 && R.calAttempts < 3) { S.cals.push(calSummary(c, 'run ' + R.id, true)); R.goAt = t + 1500; R.retake = `You moved (${c.spread.toFixed(1)} deg): hold still.`; return; }
       commitCal(c, 'run ' + R.id); R.calSpread = c.spread; R.unsteady = c.spread > 1.5;
-      R.phase = 'go'; R.prev = t; R.filt.reset();
+      R.phase = 'go'; R.prev = t; R.filt.reset(); R.ev0 = { t, mot: S.counts.mot, ori: S.counts.ori };
       ovText(R.unsteady ? `Not quite still (${c.spread.toFixed(1)} deg): the run starts anyway, the card notes it.` : ''); R.noteUntil = R.unsteady ? t + 2500 : 0;
     }
     return;
@@ -262,10 +274,12 @@ function runStep(t, rafTs, cand) {
 function finishRun(why) {
   const R = S.run; if (!R) return; S.run = null;
   const sum = R.sl.summary();
+  const evS = R.ev0 ? (now() - R.ev0.t) / 1000 : 0;   // events per second during this run's own time, not the 5 s before Copy
+  const ev = evS > 0.5 ? { evMot: rd((S.counts.mot - R.ev0.mot) / evS, 1), evOri: rd((S.counts.ori - R.ev0.ori) / evS, 1) } : { evMot: null, evOri: null };
   const res = { n: S.runs.length + 1, id: R.id, letter: LETTER[R.id], filter: R.filter, settings: R.settings, why, startedAt: R.startedAt, ...sum, nulls: R.nulls,
     orientationChanges: R.orientationChanges, calSpread: rd(R.calSpread, 2), calAttempts: R.calAttempts, unsteady: !!R.unsteady, ageMedian: rd(M.median(R.ages), 2), ageP95: rd(M.percentile(R.ages, 95), 2),
     stampAgeMedian: rd(M.median(R.agesTs), 2), stampAgeP95: rd(M.percentile(R.agesTs, 95), 2), lag: runLags(R),
-    gyroMappedShare: R.frames.length ? rd(R.gyroMappedFrames / R.frames.length, 3) : null, frames: R.frames };
+    gyroMappedShare: R.frames.length ? rd(R.gyroMappedFrames / R.frames.length, 3) : null, ...ev, frames: R.frames };
   S.runs.push(res); save();
   ovText(`${LETTER[R.id]}  ${NAMES[R.id]}: ${gatesText(res)}` + (fin(sum.lapS) ? `, ${sum.lapS.toFixed(1)} s` : '') +
     `, ${sum.corrections} corrections` + (why === 'finished' ? '' : ` (${why})`) + (R.orientationChanges ? `\nThe screen rotated ${R.orientationChanges}x` : '') + '\nTap Close');
@@ -483,7 +497,10 @@ function recapText() {
   const C = { ...S.auto, ...S.typed }, rt = rates(), A = S.answers;
   // ages from the run summaries, so they survive a reload (review r2 N4): the median of the runs' medians and of their p95s
   const runStat = (src, key) => M.median(S.runs.filter((r) => SOURCE[r.id] === src).map((r) => r[key]).filter(fin));
-  const fr = M.median(S.rafDeltas), rest = S.rests[S.rests.length - 1];
+  // the card shows the last rest test taken while still; a moving one only if there is no other, marked void
+  const fr = M.median(S.rafDeltas), frMean = M.mean(S.rafDeltas), rest = [...S.rests].reverse().find((r) => r.still !== false) || S.rests[S.rests.length - 1];
+  const restsMoved = S.rests.filter((r) => r.still === false).length;
+  const evRun = (k) => M.median(S.runs.map((r) => r[k]).filter(fin));
   const lagOf = (name) => M.median(S.runs.map((r) => r.lag && r.lag.filters[name]).filter(fin));
   const vsQ = (k) => M.median(S.runs.map((r) => r.lag && r.lag.vsQTW[k]).filter(fin));
   const stamp = (id) => M.median(S.runs.filter((r) => SOURCE[r.id] === id).map((r) => r.stampAgeMedian).filter(fin));
@@ -492,11 +509,12 @@ function recapText() {
   L.push(`Phone: ${C.model || '?'} | OS/browser: ${C.os || shortUA() + ' (from the browser, may be frozen)'} | GPU: ${C.gpu} | DPR ${C.dpr} | screen ${C.screen} | in a frame: ${C.inFrame ? 'YES' : 'no'}`);
   L.push(`Battery ${C.battery || C.batteryApi || '?'} | charging ${A.charging || '?'} | Low Power ${A.lpm || '?'} | brightness ${A.brightness || '?'}, auto ${A.autoBrightness || '?'} | Auto-Lock ${A.autoLock || '?'} | room ${C.room || '?'} C`);
   L.push(`https ${S.secure ? 'yes' : 'NO'} | permission: motion ${S.perm.motion}, orientation ${S.perm.orientation} | prompt seen: ${A.prompt || '?'} | orientation-lock warnings ${S.lockWarnCount}`);
-  L.push(`Events/s: orientation ${fmt(rt.ori, 1)}, motion ${fmt(rt.mot, 1)} | motion interval ${intervalText()} | empty events ${S.nulls.ori}/${S.nulls.mot} | own time stamps ${S.tsFallback ? 'not usable ' + S.tsFallback + 'x' : 'ok'}`);
-  L.push(`Frames: median ${fmt(fr, 2)} ms (${fmt(1000 / fr, 0)} Hz), p95 ${fmt(M.percentile(S.rafDeltas, 95), 2)} | handler to frame callback, median/p95 over runs, ms: motion ${fmt(runStat('mot', 'ageMedian'), 1)}/${fmt(runStat('mot', 'ageP95'), 1)}, orientation ${fmt(runStat('ori', 'ageMedian'), 1)}/${fmt(runStat('ori', 'ageP95'), 1)} | event stamp to frame stamp median ms: motion ${fmt(stamp('mot'), 1)}, orientation ${fmt(stamp('ori'), 1)}`);
+  L.push(`Events/s during the runs (median of runs): orientation ${fmt(evRun('evOri'), 1)}, motion ${fmt(evRun('evMot'), 1)} | in the 5 s before Copy: orientation ${fmt(rt.ori, 1)}, motion ${fmt(rt.mot, 1)} | motion interval ${intervalText()} | empty events ${S.nulls.ori}/${S.nulls.mot} | own time stamps ${S.tsFallback ? 'not usable ' + S.tsFallback + 'x' : 'ok'}`);
+  L.push(`Frames: mean ${fmt(frMean, 2)} ms (${fmt(1000 / frMean, 1)} Hz), median ${fmt(fr, 2)}, p95 ${fmt(M.percentile(S.rafDeltas, 95), 2)}, time stamps in whole ms ${S.frameNo ? fmt(100 * S.rafWholeMs / S.frameNo, 0) : '-'}% | handler to frame callback, median/p95 over runs, ms: motion ${fmt(runStat('mot', 'ageMedian'), 1)}/${fmt(runStat('mot', 'ageP95'), 1)}, orientation ${fmt(runStat('ori', 'ageMedian'), 1)}/${fmt(runStat('ori', 'ageP95'), 1)} | event stamp to frame stamp median ms: motion ${fmt(stamp('mot'), 1)}, orientation ${fmt(stamp('ori'), 1)}`);
   L.push(`Gravity reading: ${convText()} | screen angle check: ${S.cal ? S.cal.screenCheck : '?'} | ${holdText()} | gyro: ${gl ? `${gl.verdict}, in rotationRate.${gl.component} (k ${fmt(gl.k, 2)}, r2 ${fmt(gl.r2, 2)}, n ${gl.n})${gl.restored ? ', from before the reload' : ''}` : 'NOT FOUND (B was not run)'}`);
   L.push(`Resolution (smallest step seen): ${resolutionText()}`);
-  L.push(rest ? `Rest noise std deg (A and D include a 60 ms gravity smoothing): ${CANDS.map((k) => `${LETTER[k]} ${fmt(rest.std[k], 3)}`).join(' ')} | accel std x/y/z ${rest.accStd.map((v) => fmt(v, 3)).join('/')} m/s2 | gyro std about the screen normal ${fmt(rest.gyroScreenNormalStdDegS, 3)} deg/s` : 'Rest noise: rest test not run');
+  const stillText = (r) => (r.still === false ? `NOT STILL (drift ${fmt(r.driftDeg, 1)} deg): these numbers do not count` : r.still === true ? `still (drift ${fmt(r.driftDeg, 2)} deg)` : 'stillness not measured');
+  L.push(rest ? `Rest noise std deg (A and D include a 60 ms gravity smoothing): ${CANDS.map((k) => `${LETTER[k]} ${fmt(rest.std[k], 3)}`).join(' ')} | accel std x/y/z ${rest.accStd.map((v) => fmt(v, 3)).join('/')} m/s2 | gyro std about the screen normal ${fmt(rest.gyroScreenNormalStdDegS, 3)} deg/s | ${stillText(rest)}${restsMoved ? ` | rest tests with movement: ${restsMoved}` : ''}` : 'Rest noise: rest test not run');
   L.push(`Filter lag ms (on each run's own signal): ${Object.keys(M.FILTERS).map((f) => `${f} ${fmt(lagOf(f), 0)}`).join(' | ')} | lag vs C ms: ${CANDS.filter((k) => k !== 'QTW').map((k) => `${LETTER[k]} ${fmt(vsQ(k), 0)}`).join(' ')}`);
   const shown = S.runs.slice(-12);
   if (S.runs.length > shown.length) L.push(`(${S.runs.length - shown.length} earlier runs not shown here)`);
@@ -504,7 +522,7 @@ function recapText() {
   if (!S.runs.length) L.push('Runs: none yet');
   const idle = S.idles[S.idles.length - 1];
   L.push(`Screen rotations, all: ${S.orientationChanges} | wake lock: ${S.wake.state} (released ${S.wake.releases}x) | idle ${idle ? Math.round(idle.durMs / 1000) + ' s, hidden ' + idle.hidden + 'x, touched ' + idle.touched + 'x' : 'not run'}, dimmed: ${A.dimmed || '?'}`);
-  L.push(`Sound: ${S.audio.state}, audioSession ${S.audio.session} | heard: silent mode off ${A.offHeard || '?'}, silent on ${A.onHeard || '?'}, silent on + play anyway ${A.onPlayback || '?'}`);
+  L.push(`Sound: ${S.audio.state}, audioSession ${S.audio.session} | came out of: ${A.output || '?'} | heard: silent mode off ${A.offHeard || '?'}, silent on ${A.onHeard || '?'}, silent on + play anyway ${A.onPlayback || '?'}`);
   L.push(`Vibrate: ${S.vib.calls.length ? S.vib.calls[S.vib.calls.length - 1] : S.vib.supported ? 'API present, not tried' : 'no API'} | felt: ${A.vibFelt || '?'}`);
   L.push(`Verdict: best ${A.best || '?'}, worst ${A.worst || '?'}, comfort ${C.comfort || '?'}, fun ${C.fun || '?'} | notes: ${C.notes || '-'}`);
   return L.join('\n');
